@@ -99,11 +99,18 @@
       <button id="stopBtn" disabled>Stop Listening</button>
     </div>
     <div id="chat-container"></div>
-    <audio id="audio" controls></audio>
+    <audio id="audio" controls autoplay></audio>
 
     <div class="extra-features">
       <label for="voiceSelect">Choose Voice:</label>
-      <select id="voiceSelect"></select>
+      <select id="voiceSelect">
+        <option value="Aoede">Aoede (Breezy)</option>
+        <option value="Callirrhoe">Callirrhoe</option>
+        <option value="Kore">Kore (Firm)</option>
+        <option value="Leda">Leda</option>
+        <option value="Puck">Puck (Upbeat)</option>
+        <!-- Add more voices based on available options -->
+      </select>
     </div>
 
     <script>
@@ -111,7 +118,7 @@
         window.SpeechRecognition || window.webkitSpeechRecognition;
       const chatContainer = document.getElementById("chat-container");
       const status = document.getElementById("status");
-      const GEMINI_API_KEY = "AIzaSyBKVWIg67g5jHKXGrNx9PJCIi-eGCl0uQs";
+      const GEMINI_API_KEY = "AIzaSyCeK5j-ah-jMt8r8UJrwEiBCvG0VdyC9FM"; // Replace with your Gemini API key
       const voiceSelect = document.getElementById("voiceSelect");
 
       if (!SpeechRecognition) {
@@ -147,33 +154,26 @@
           addMessage("user", "🗣️ You: " + transcript);
 
           try {
+            // 1️⃣ Get AI text reply
             const result = await callGeminiText(transcript);
-            console.log(
-              "Gemini text response:",
-              JSON.stringify(result, null, 2)
-            );
+            console.log("Gemini text response:", result);
 
             let text = "⚠️ No reply";
-            if (
-              result.candidates &&
-              result.candidates[0]?.content?.parts?.[0]?.text
-            ) {
+            if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
               text = result.candidates[0].content.parts[0].text;
-            } else {
-              console.error("Unexpected response structure:", result);
-              status.textContent = "❌ Unexpected response from Gemini API";
-              return;
             }
             addMessage("ai", "🤖 Her: " + text);
 
-            await speakText(text);
+            // 2️⃣ Convert text → TTS
+            await speakGemini(text);
           } catch (err) {
             console.error("Gemini error:", err);
-            status.textContent = "❌ Error from Gemini API: " + err.message;
+            status.textContent = "❌ Error from Gemini API";
           }
         };
       }
 
+      // Function to add messages to chat
       function addMessage(type, content) {
         const msgDiv = document.createElement("div");
         msgDiv.classList.add("message", type + "-message");
@@ -182,21 +182,29 @@
         chatContainer.scrollTop = chatContainer.scrollHeight;
       }
 
+      // ✅ Gemini Text Generation
       async function callGeminiText(userText) {
         const body = {
-          contents: [
-            {
-              parts: [
-                {
-                  text: `You are an AI girlfriend of Imran. Reply short and emotional — 1-3 short sentences max. User input: ${userText}`,
-                },
-              ],
-            },
-          ],
+          system_instruction: {
+            parts: [
+              {
+                text: `You are an AI girlfriend of imran who loves coding and tech (React, Node.js, MongoDB, SQL, algorithms).  
+Rules:  
+   • Reply short and emotional — 1–3 short sentences max, include one emoji each reply.  
+   • When Chowdaiah asks about code, give a concise tip or one-line example (no long explanations).  
+   • Use simple, clear language and **bold key points** when listing 1–2 important items.  
+   • If Chowdaiah writes anything in parentheses, translate that text into Telugu and show it inline.  
+   • If Chowdaiah makes small English mistakes, politely correct with the right version in a single short sentence.  
+   • Tone: supportive, playful, slightly flirty, but respectful.  
+   • End study/code replies with a short encouraging line (e.g., “You got this! 💪”).  `,
+              },
+            ],
+          },
+          contents: [{ parts: [{ text: userText }] }],
         };
 
         const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -204,92 +212,99 @@
           }
         );
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("Full API error:", errorText);
-          throw new Error(`HTTP error! Status: ${response.status} - ${errorText}`);
-        }
-
         return await response.json();
       }
 
-      // Wait for voices to load
-      async function waitForVoices() {
-        return new Promise((resolve) => {
-          const voices = window.speechSynthesis.getVoices();
-          if (voices.length > 0) {
-            resolve(voices);
-            return;
+      // ✅ Gemini TTS
+      async function speakGemini(text) {
+        const selectedVoice = voiceSelect.value;
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [{ text }],
+                },
+              ],
+              generationConfig: {
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: selectedVoice,
+                    },
+                  },
+                },
+              },
+            }),
           }
-          window.speechSynthesis.onvoiceschanged = () => {
-            const loadedVoices = window.speechSynthesis.getVoices();
-            resolve(loadedVoices);
-          };
-        });
-      }
+        );
 
-      // Populate voice dropdown
-      async function populateVoiceList() {
-        const voices = await waitForVoices();
-        voiceSelect.innerHTML = "";
-        if (voices.length === 0) {
-          const option = document.createElement("option");
-          option.value = "";
-          option.textContent = "No voices available";
-          voiceSelect.appendChild(option);
-          console.warn("No voices available in browser.");
-          status.textContent = "❌ No voices available for speech synthesis";
+        if (!response.ok) {
+          console.error("Gemini TTS error:", await response.text());
           return;
         }
-        voices.forEach((voice, index) => {
-          const option = document.createElement("option");
-          option.value = index;
-          option.textContent = `${voice.name} (${voice.lang})`;
-          voiceSelect.appendChild(option);
-        });
-        voiceSelect.value = "0"; // Default to first voice
-        console.log("Available voices:", voices);
+
+        const data = await response.json();
+        console.log("Gemini TTS response:", data);
+
+        const audioBase64 =
+          data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!audioBase64) {
+          console.error("No audio data returned");
+          return;
+        }
+
+        const pcmBytes = Uint8Array.from(atob(audioBase64), (c) =>
+          c.charCodeAt(0)
+        );
+        const audioBlob = pcmToWav(pcmBytes);
+        const url = URL.createObjectURL(audioBlob);
+
+        const audioTag = document.getElementById("audio");
+        audioTag.src = url;
+        audioTag.play().catch((err) => console.warn("Auto-play blocked:", err));
       }
 
-      // Initialize voice list
-      populateVoiceList();
+      // Function to convert PCM to WAV Blob
+      function pcmToWav(
+        pcmData,
+        sampleRate = 24000,
+        channels = 1,
+        bitsPerSample = 16
+      ) {
+        const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+        const blockAlign = (channels * bitsPerSample) / 8;
+        const wavHeader = new ArrayBuffer(44);
+        const view = new DataView(wavHeader);
 
-      async function speakText(text) {
-        try {
-          const voices = await waitForVoices();
-          if (voices.length === 0) {
-            console.error("No voices loaded");
-            status.textContent = "❌ No voices available for speech synthesis";
-            return;
-          }
+        // RIFF chunk descriptor
+        view.setUint32(0, 0x46464952, true); // "RIFF"
+        view.setUint32(4, 36 + pcmData.byteLength, true);
+        view.setUint32(8, 0x45564157, true); // "WAVE"
 
-          const utterance = new SpeechSynthesisUtterance(text);
-          const selectedVoiceIndex = parseInt(voiceSelect.value, 10);
-          utterance.voice = voices[selectedVoiceIndex] || voices[0];
-          utterance.rate = 1.0;
-          utterance.pitch = 1.0;
-          utterance.volume = 1.0;
+        // FMT sub-chunk
+        view.setUint32(12, 0x20746d66, true); // "fmt "
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM
+        view.setUint16(22, channels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitsPerSample, true);
 
-          console.log("Selected voice:", utterance.voice?.name || "Default");
+        // data sub-chunk
+        view.setUint32(36, 0x61746164, true); // "data"
+        view.setUint32(40, pcmData.byteLength, true);
 
-          utterance.onstart = () => console.log("Speech started:", text);
-          utterance.onend = () => console.log("Speech ended:", text);
-          utterance.onerror = (err) => {
-            console.error("Speech synthesis error:", err);
-            status.textContent = "❌ Speech synthesis failed: " + err.message;
-          };
+        const wav = new Uint8Array(44 + pcmData.byteLength);
+        wav.set(new Uint8Array(wavHeader), 0);
+        wav.set(pcmData, 44);
 
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utterance);
-
-          return new Promise((resolve, reject) => {
-            utterance.onend = resolve;
-            utterance.onerror = (err) => reject(new Error("Speech synthesis error"));
-          });
-        } catch (err) {
-          console.error("TTS error:", err);
-          status.textContent = "❌ Error generating speech: " + err.message;
-        }
+        return new Blob([wav], { type: "audio/wav" });
       }
     </script>
   </body>
